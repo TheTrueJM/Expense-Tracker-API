@@ -1,10 +1,23 @@
 from config import app, db
-from models import User, Tasks
+from models import Users, Tasks
+from category import Category
 
 from flask import request, jsonify
+from flask_restful import reqparse
 from functools import wraps
 from datetime import datetime, timedelta, UTC
 import jwt, hashlib, os
+
+
+
+user_args = reqparse.RequestParser()
+user_args.add_argument("username", type=str, required=True, help="Username is required")
+user_args.add_argument("password", type=str, required=True, help="Password is required")
+
+expense_args = reqparse.RequestParser()
+expense_args.add_argument("description", type=str, required=True, help="Expense description is required")
+expense_args.add_argument("category", type=str, choices=Category.names(), required=True, help="Valid expense category is required")
+expense_args.add_argument("amount", type=float, required=True, help="Expense cost amount is required")
 
 
 
@@ -17,7 +30,7 @@ def authentication_required(f):
         try:
             token = request.headers["jwt-token"]
             data = jwt.decode(token, app.config["SECRET_KEY"], algorithms="HS256")
-            current_user = User.query.filter_by(username=data["username"]).first()
+            current_user = Users.query.filter_by(username=data["username"]).first()
             if not current_user:
                 raise ValueError
         except:
@@ -28,10 +41,68 @@ def authentication_required(f):
 
 
 
-@app.route("/")
+@app.route("/expenses")
 @authentication_required
-def home(user):
-    return jsonify({})
+def expenses(user):
+    # time
+    # time_start
+    # time_end
+    user_expenses = Tasks.query.filter_by(username=user.username).all()
+    return jsonify({"expenses": user_expenses})
+
+@app.route("/expenses/<int:id>")
+@authentication_required
+def expense(user, id):
+    user_expense = Tasks.query.filter_by(username=user.username, id=id).first()
+    if user_expense:
+        return jsonify({"expense": user_expense.serialize()})
+    return jsonify({"message": "No post found"}), 404
+
+
+@app.route("/expenses", methods=["POST"])
+@authentication_required
+def create_expense(user):
+    args = expense_args.parse_args()
+    description, category, amount = args["description"], args["category"], args["amount"]
+
+    if amount <= 0:
+        return jsonify({"message": "Invalid cost amount"}), 400
+
+    date = datetime.now(UTC).date()
+
+    expense = Tasks(username=user.username, description=description, category=category, amount=amount, date=date)
+    db.session.add(expense)
+    db.session.commit()
+
+    return jsonify({"expense": expense.serialize()}), 201
+
+@app.route("/expenses/<int:id>", methods=["PUT"])
+@authentication_required
+def update_expense(user, id):
+    user_expense = Tasks.query.filter_by(username=user.username, id=id).first()
+    if not user_expense:
+        return jsonify({"message": "No post found"}), 404
+    
+    args = expense_args.parse_args()
+    if args["amount"] <= 0:
+        return jsonify({"message": "Invalid cost amount"}), 400
+
+    user_expense.description = args["description"]
+    user_expense.category = args["category"]
+    user_expense.amount = args["amount"]
+    db.session.commit()
+
+    return jsonify({"expense": user_expense.serialize()})
+
+@app.route("/expenses/<int:id>", methods=["PUT"])
+@authentication_required
+def delete_expense(user, id):
+    user_expense = Tasks.query.filter_by(username=user.username, id=id).first()
+    if user_expense:
+        db.session.delete(user_expense)
+        db.session.commit()
+        return jsonify({}), 204
+    return jsonify({"message": "No post found"}), 404
 
 
 
@@ -42,43 +113,32 @@ def password_hasher(password, salt):
 
 @app.route("/signup", methods=["POST"])
 def signup():
-    username = request.json.get("username")
-    password = request.json.get("password")
+    args = user_args.parse_args()
+    username, password = args["username"], args["password"]
 
-    feedback = ""
-    if not username:
-        feedback = "Username is required"
-    elif User.query.filter_by(username=username).first():
-        feedback = "Username is already taken"
-    elif not password:
-        feedback = "Password is required"
-
-    if feedback:
-        return jsonify({"message": feedback}), 401
+    if Users.query.filter_by(username=username).first():
+        return jsonify({"message": "Username is already taken"}), 401
     
     hashed_password = password_hasher(password.encode('utf-8'), os.urandom(32))
-    user = User(username=username, password=hashed_password)
+    user = Users(username=username, password=hashed_password)
     db.session.add(user)
     db.session.commit()
     return jsonify({"message": "Successful new user sign up"})
 
 @app.route("/login", methods=["POST"])
 def login():
-    username = request.json.get("username")
-    password = request.json.get("password")
+    args = user_args.parse_args()
+    username, password = args["username"], args["password"]
 
     feedback = ""
-    if not username or not password:
-        feedback = f"{"Username" if password else "Password"} is required"
+    user = Users.query.filter_by(username=username).first()
+    if not user:
+        feedback = f"User '{username}' was not found"
     else:
-        user = User.query.filter_by(username=username).first()
-        if not user:
-            feedback = f"User '{username}' was not found"
-        else:
-            password_salt = user.password[:16] + user.password[-16:]
-            hashed_password = password_hasher(password.encode('utf-8'), password_salt)
-            if hashed_password != user.password:
-                feedback = "Password is incorrect"
+        password_salt = user.password[:16] + user.password[-16:]
+        hashed_password = password_hasher(password.encode('utf-8'), password_salt)
+        if hashed_password != user.password:
+            feedback = "Password is incorrect"
     
     if feedback:
         return jsonify({"message": feedback}), 401
