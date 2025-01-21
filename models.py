@@ -3,7 +3,7 @@ from category import Category
 
 class Users(db.Model):
     username = db.Column(db.String, primary_key=True)
-    password = db.Column(db.String)
+    password = db.Column(db.LargeBinary)
 
 class Tasks(db.Model):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)

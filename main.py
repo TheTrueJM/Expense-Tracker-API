@@ -3,7 +3,7 @@ from models import Users, Tasks
 from category import Category
 
 from flask import request, jsonify
-from flask_restful import reqparse
+from flask_restful import reqparse, inputs
 from functools import wraps
 from datetime import datetime, timedelta, UTC
 import jwt, hashlib, os
@@ -19,90 +19,10 @@ expense_args.add_argument("description", type=str, required=True, help="Expense 
 expense_args.add_argument("category", type=str, choices=Category.names(), required=True, help="Valid expense category is required")
 expense_args.add_argument("amount", type=float, required=True, help="Expense cost amount is required")
 
-
-
-def authentication_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if "jwt-token" not in request.headers:
-            return jsonify({"message": "JSON Web Token Missing"}), 401
-        
-        try:
-            token = request.headers["jwt-token"]
-            data = jwt.decode(token, app.config["SECRET_KEY"], algorithms="HS256")
-            current_user = Users.query.filter_by(username=data["username"]).first()
-            if not current_user:
-                raise ValueError
-        except:
-            return jsonify({"message": "Invalid JSON Web Token"}), 401
-        
-        return f(current_user, *args, **kwargs)
-    return decorated
-
-
-
-@app.route("/expenses")
-@authentication_required
-def expenses(user):
-    # time
-    # time_start
-    # time_end
-    user_expenses = Tasks.query.filter_by(username=user.username).all()
-    return jsonify({"expenses": user_expenses})
-
-@app.route("/expenses/<int:id>")
-@authentication_required
-def expense(user, id):
-    user_expense = Tasks.query.filter_by(username=user.username, id=id).first()
-    if user_expense:
-        return jsonify({"expense": user_expense.serialize()})
-    return jsonify({"message": "No post found"}), 404
-
-
-@app.route("/expenses", methods=["POST"])
-@authentication_required
-def create_expense(user):
-    args = expense_args.parse_args()
-    description, category, amount = args["description"], args["category"], args["amount"]
-
-    if amount <= 0:
-        return jsonify({"message": "Invalid cost amount"}), 400
-
-    date = datetime.now(UTC).date()
-
-    expense = Tasks(username=user.username, description=description, category=category, amount=amount, date=date)
-    db.session.add(expense)
-    db.session.commit()
-
-    return jsonify({"expense": expense.serialize()}), 201
-
-@app.route("/expenses/<int:id>", methods=["PUT"])
-@authentication_required
-def update_expense(user, id):
-    user_expense = Tasks.query.filter_by(username=user.username, id=id).first()
-    if not user_expense:
-        return jsonify({"message": "No post found"}), 404
-    
-    args = expense_args.parse_args()
-    if args["amount"] <= 0:
-        return jsonify({"message": "Invalid cost amount"}), 400
-
-    user_expense.description = args["description"]
-    user_expense.category = args["category"]
-    user_expense.amount = args["amount"]
-    db.session.commit()
-
-    return jsonify({"expense": user_expense.serialize()})
-
-@app.route("/expenses/<int:id>", methods=["PUT"])
-@authentication_required
-def delete_expense(user, id):
-    user_expense = Tasks.query.filter_by(username=user.username, id=id).first()
-    if user_expense:
-        db.session.delete(user_expense)
-        db.session.commit()
-        return jsonify({}), 204
-    return jsonify({"message": "No post found"}), 404
+time_filters = reqparse.RequestParser() ### Add Helpers
+time_filters.add_argument("time-period", type=str, choices={"week", "month", "three-months"}, location="args", help="")
+time_filters.add_argument("time-start", type=inputs.date, location="args", help="")
+time_filters.add_argument("time-end", type=inputs.date, location="args", help="")
 
 
 
@@ -110,6 +30,7 @@ def password_hasher(password, salt):
     hashed_password = hashlib.scrypt(password, salt=salt, n=16384, r=8, p=1, dklen=32)
     final_password = salt[:16] + hashed_password + salt[-16:]
     return final_password
+
 
 @app.route("/signup", methods=["POST"])
 def signup():
@@ -149,6 +70,108 @@ def login():
         algorithm="HS256"
     )
     return jsonify({"message": "Successful user login", "jwt-token": token})
+
+
+
+def authentication_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if "jwt-token" not in request.headers:
+            return jsonify({"message": "JSON Web Token Missing"}), 401
+        
+        try:
+            token = request.headers["jwt-token"]
+            data = jwt.decode(token, app.config["SECRET_KEY"], algorithms="HS256")
+            current_user = Users.query.filter_by(username=data["username"]).first()
+            if not current_user:
+                raise ValueError
+        except:
+            return jsonify({"message": "Invalid JSON Web Token"}), 401
+        
+        return f(current_user, *args, **kwargs)
+    return decorated
+
+
+@app.route("/expenses")
+@authentication_required
+def expenses(user):
+    args = time_filters.parse_args()
+
+    if args["time-period"]:
+        current_date = datetime.now(UTC).date()
+        match args["time-period"]:
+            case "week":
+                current_date -= timedelta(days=7)
+            case "month":
+                current_date -= timedelta(days=30)
+            case "three-month":
+                current_date -= timedelta(days=90)
+        user_expenses = Tasks.query.filter(Tasks.username==user.username, current_date <= Tasks.date).all()
+    
+    elif args["time-start"] or args["time-end"]:
+        if not args["time-end"]:
+            user_expenses = Tasks.query.filter_by(args["time-start"] <= Tasks.date).all()
+        if not args["time-start"]:
+            user_expenses = Tasks.query.filter_by(Tasks.date <= args["time-end"]).all()
+        else:
+            user_expenses = Tasks.query.filter_by(args["time-start"] <= Tasks.date <= args["time-end"]).all()
+    
+    else:
+        user_expenses = Tasks.query.filter_by(username=user.username).all()
+    
+    return jsonify({"expenses": [expense.serialize() for expense in user_expenses]})
+
+@app.route("/expenses", methods=["POST"])
+@authentication_required
+def create_expense(user):
+    args = expense_args.parse_args()
+    description, category, amount = args["description"], args["category"], args["amount"]
+
+    if amount <= 0:
+        return jsonify({"message": "Invalid cost amount"}), 400
+
+    date = datetime.now(UTC).date()
+    expense = Tasks(username=user.username, description=description, category=category, amount=amount, date=date)
+    db.session.add(expense)
+    db.session.commit()
+    return jsonify({"expense": expense.serialize()}), 201
+
+
+@app.route("/expenses/<int:id>")
+@authentication_required
+def expense(user, id):
+    user_expense = Tasks.query.filter_by(username=user.username, id=id).first()
+    if not user_expense:
+        return jsonify({"message": "No expense found"}), 404
+    return jsonify({"expense": user_expense.serialize()})
+
+@app.route("/expenses/<int:id>", methods=["PUT"])
+@authentication_required
+def update_expense(user, id):
+    user_expense = Tasks.query.filter_by(username=user.username, id=id).first()
+    if not user_expense:
+        return jsonify({"message": "No post found"}), 404
+    
+    args = expense_args.parse_args()
+    if args["amount"] <= 0:
+        return jsonify({"message": "Invalid cost amount"}), 400
+
+    user_expense.description = args["description"]
+    user_expense.category = args["category"]
+    user_expense.amount = args["amount"]
+    db.session.commit()
+    return jsonify({"expense": user_expense.serialize()})
+
+@app.route("/expenses/<int:id>", methods=["DELETE"])
+@authentication_required
+def delete_expense(user, id):
+    user_expense = Tasks.query.filter_by(username=user.username, id=id).first()
+    if not user_expense:
+        return jsonify({"message": "No post found"}), 404
+    
+    db.session.delete(user_expense)
+    db.session.commit()
+    return jsonify({}), 204
 
 
 

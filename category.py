@@ -1,6 +1,6 @@
-import enum
+from enum import Enum
 
-class Category(enum.Enum):
+class Category(Enum):
     Groceries = 1
     Leisure = 2
     Electronics = 3
