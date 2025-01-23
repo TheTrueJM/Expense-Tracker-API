@@ -1,9 +1,11 @@
 from config import db
 from category import Category
 
+from datetime import datetime, UTC
+
 class Users(db.Model):
     username = db.Column(db.String, primary_key=True)
-    password = db.Column(db.LargeBinary)
+    password = db.Column(db.LargeBinary(64))
 
 class Tasks(db.Model):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
@@ -11,7 +13,7 @@ class Tasks(db.Model):
     description = db.Column(db.String)
     category = db.Column(db.Enum(Category))
     amount = db.Column(db.Float)
-    date = db.Column(db.Date)
+    date = db.Column(db.Date, default=datetime.now(UTC).date)
 
     def serialize(self):
         return {

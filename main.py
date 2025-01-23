@@ -19,10 +19,10 @@ expense_args.add_argument("description", type=str, required=True, help="Expense 
 expense_args.add_argument("category", type=str, choices=Category.names(), required=True, help="Valid expense category is required")
 expense_args.add_argument("amount", type=float, required=True, help="Expense cost amount is required")
 
-time_filters = reqparse.RequestParser() ### Add Helpers
-time_filters.add_argument("time-period", type=str, choices={"week", "month", "three-months"}, location="args", help="")
-time_filters.add_argument("time-start", type=inputs.date, location="args", help="")
-time_filters.add_argument("time-end", type=inputs.date, location="args", help="")
+time_filters = reqparse.RequestParser()
+time_filters.add_argument("time-period", type=str, choices={"week", "month", "three-months"}, location="args", help="Valid time peroids are week, month, and three-months")
+time_filters.add_argument("time-start", type=inputs.date, location="args", help="Valid time start must be a date")
+time_filters.add_argument("time-end", type=inputs.date, location="args", help="Valid time end must be a date")
 
 
 
@@ -98,23 +98,23 @@ def expenses(user):
     args = time_filters.parse_args()
 
     if args["time-period"]:
-        current_date = datetime.now(UTC).date()
+        chosen_date = datetime.now(UTC).date()
         match args["time-period"]:
             case "week":
-                current_date -= timedelta(days=7)
+                chosen_date -= timedelta(days=7)
             case "month":
-                current_date -= timedelta(days=30)
-            case "three-month":
-                current_date -= timedelta(days=90)
-        user_expenses = Tasks.query.filter(Tasks.username==user.username, current_date <= Tasks.date).all()
+                chosen_date -= timedelta(days=30)
+            case "three-months":
+                chosen_date -= timedelta(days=90)
+        user_expenses = Tasks.query.filter(Tasks.username==user.username, chosen_date <= Tasks.date).all()
     
     elif args["time-start"] or args["time-end"]:
         if not args["time-end"]:
-            user_expenses = Tasks.query.filter_by(args["time-start"] <= Tasks.date).all()
-        if not args["time-start"]:
-            user_expenses = Tasks.query.filter_by(Tasks.date <= args["time-end"]).all()
+            user_expenses = Tasks.query.filter(Tasks.username==user.username, args["time-start"] <= Tasks.date).all()
+        elif not args["time-start"]:
+            user_expenses = Tasks.query.filter(Tasks.username==user.username, Tasks.date <= args["time-end"]).all()
         else:
-            user_expenses = Tasks.query.filter_by(args["time-start"] <= Tasks.date <= args["time-end"]).all()
+            user_expenses = Tasks.query.filter(Tasks.username==user.username, args["time-start"] <= Tasks.date, Tasks.date <= args["time-end"]).all()
     
     else:
         user_expenses = Tasks.query.filter_by(username=user.username).all()
@@ -130,8 +130,7 @@ def create_expense(user):
     if amount <= 0:
         return jsonify({"message": "Invalid cost amount"}), 400
 
-    date = datetime.now(UTC).date()
-    expense = Tasks(username=user.username, description=description, category=category, amount=amount, date=date)
+    expense = Tasks(username=user.username, description=description, category=category, amount=amount)
     db.session.add(expense)
     db.session.commit()
     return jsonify({"expense": expense.serialize()}), 201
@@ -150,7 +149,7 @@ def expense(user, id):
 def update_expense(user, id):
     user_expense = Tasks.query.filter_by(username=user.username, id=id).first()
     if not user_expense:
-        return jsonify({"message": "No post found"}), 404
+        return jsonify({"message": "No expense found"}), 404
     
     args = expense_args.parse_args()
     if args["amount"] <= 0:
@@ -167,7 +166,7 @@ def update_expense(user, id):
 def delete_expense(user, id):
     user_expense = Tasks.query.filter_by(username=user.username, id=id).first()
     if not user_expense:
-        return jsonify({"message": "No post found"}), 404
+        return jsonify({"message": "No expense found"}), 404
     
     db.session.delete(user_expense)
     db.session.commit()
