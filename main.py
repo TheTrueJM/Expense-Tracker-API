@@ -44,7 +44,7 @@ def signup():
     user = Users(username=username, password=hashed_password)
     db.session.add(user)
     db.session.commit()
-    return jsonify({"message": "Successful new user sign up"})
+    return jsonify({"message": "Successful new user sign up"}), 201
 
 @app.route("/login", methods=["POST"])
 def login():
